@@ -36,12 +36,47 @@ cd /etc/unbound && mv unbound.conf unbound.conf.example
 # Install lancache unbound main config file
 cp $SCRIPT_DIR/unbound.conf /etc/unbound/unbound.conf
 
-# Create unbound config files from templates
-for UPSTREAM_CONFIG in $SCRIPT_DIR/upstreams-available/*.templ; do /usr/bin/envsubst '$LANCACHE_IP' < $UPSTREAM_CONFIG > ${UPSTREAM_CONFIG/.templ/}; done
-
-# Move generated config files into place
+# Prepare the upstreams config directory
 mkdir -p /etc/unbound/upstreams-available
-mv $SCRIPT_DIR/upstreams-available/*.conf /etc/unbound/upstreams-available/
+
+# Get domains from `uklans/cache-domains` GitHub repo
+rm -rf /var/git/lancache-cache-domains
+/usr/bin/git clone https://github.com/uklans/cache-domains.git /var/git/lancache-cache-domains
+
+# Set the upstreams we want to create unbound config files from
+declare -a UPSTREAMS=("blizzard" "origin" "riot" "steam" "windowsupdates")
+
+# Loop through each upstream file in turn
+for UPSTREAM in "${UPSTREAMS[@]}"
+do
+    UPSTREAM_CONFIG_FILE="/etc/unbound/upstreams-available/$UPSTREAM.conf"
+
+    # Add the starting block to the config file
+    echo "server:" > ${UPSTREAM_CONFIG_FILE}
+
+    # Read the upstream file line by line
+    while read -r LINE;
+    do
+        # Skip line if it is a comment
+        if [[ ${LINE:0:1} == '#' ]]; then
+            continue
+        fi
+
+        # Check if hostname is a wildcard
+        if [[ $LINE == *"*"* ]]; then
+
+            # Remove the asterix and the dot from the start of the hostname
+            LINE=${LINE/#\*./}
+
+            # Add a wildcard config line
+            echo "local-zone: \"${LINE}.\" redirect" >> ${UPSTREAM_CONFIG_FILE}
+        fi
+
+        # Add a standard A record config line
+        echo "local-data: \"${LINE}. A $LANCACHE_IP\"" >> ${UPSTREAM_CONFIG_FILE}
+
+    done < /var/git/lancache-cache-domains/$UPSTREAM.txt
+done
 
 # Enable all upstreams
 mkdir -p /etc/unbound/upstreams-enabled
